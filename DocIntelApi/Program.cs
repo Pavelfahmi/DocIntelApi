@@ -131,7 +131,11 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
     app.UseDeveloperExceptionPage();
 
-app.UseHttpsRedirection();
+if (!string.Equals(
+        Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+        "true",
+        StringComparison.OrdinalIgnoreCase))
+    app.UseHttpsRedirection();
 
 // SPA UI (wwwroot) — same origin as API, no CORS needed
 app.UseDefaultFiles();

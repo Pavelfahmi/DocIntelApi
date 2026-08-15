@@ -1,0 +1,13 @@
+.git
+.vs
+**/bin
+**/obj
+**/out
+**/*.user
+**/TestResults
+**/*.md
+DocIntelApi.Tests
+canvases
+.env
+.env.*
+!**/.env.example

@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: docintel-postgres
+    environment:
+      POSTGRES_DB: docinteldb
+      POSTGRES_USER: docintel
+      POSTGRES_PASSWORD: docintel123
+    ports:
+      - "5433:5432"
+    volumes:
+      - docintel_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docintel -d docinteldb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docintel-api
+    ports:
+      - "5082:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=docinteldb;Username=docintel;Password=docintel123
+      Qdrant__Host: qdrant
+      Qdrant__Port: "6334"
+    volumes:
+      # Local user-secrets (Jwt:Secret, Gemini:ApiKey) — do not put keys in this file
+      - ${APPDATA}/Microsoft/UserSecrets/docintel-api-local-secrets:/root/.microsoft/usersecrets/docintel-api-local-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+volumes:
+  docintel_pgdata:
+    external: true
+  qdrant_storage:
+    external: true
