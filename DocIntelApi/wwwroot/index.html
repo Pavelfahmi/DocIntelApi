@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DocIntel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css?v=9" />
+</head>
+<body>
+  <!-- AUTH -->
+  <section id="auth-view" class="view auth-view">
+    <div class="auth-panel">
+      <p class="eyebrow">Document intelligence</p>
+      <h1 class="brand">DocIntel</h1>
+      <p class="lede">Upload a document. Ask grounded questions. Get answers from your files — not the open web.</p>
+
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab active" data-auth-tab="login">Sign in</button>
+        <button type="button" class="tab" data-auth-tab="register">Create account</button>
+      </div>
+
+      <form id="login-form" class="auth-form" autocomplete="on">
+        <label>Email<input name="email" type="email" required placeholder="you@company.com" /></label>
+        <label>Password<input name="password" type="password" required minlength="8" placeholder="Min 8 characters" /></label>
+        <button type="submit" class="btn primary">
+          <i data-lucide="log-in" class="icon"></i>
+          Sign in
+        </button>
+      </form>
+
+      <form id="register-form" class="auth-form hidden" autocomplete="on">
+        <label>Full name<input name="fullName" type="text" required maxlength="100" placeholder="Your name" /></label>
+        <label>Email<input name="email" type="email" required placeholder="you@company.com" /></label>
+        <label>Password<input name="password" type="password" required minlength="8" placeholder="Min 8 characters" /></label>
+        <button type="submit" class="btn primary">
+          <i data-lucide="user-plus" class="icon"></i>
+          Create account
+        </button>
+      </form>
+
+      <p id="auth-error" class="error" hidden></p>
+    </div>
+  </section>
+
+  <!-- APP -->
+  <section id="app-view" class="view app-view hidden">
+    <header class="topbar">
+      <div class="topbar-brand">
+        <span class="brand-mark">DocIntel</span>
+        <span id="user-name" class="user-chip"></span>
+      </div>
+      <div class="topbar-actions">
+        <nav id="admin-nav" class="view-nav hidden" aria-label="App views">
+          <button type="button" class="nav-btn active" data-view="workspace">
+            <i data-lucide="layout-grid" class="icon"></i>
+            Workspace
+          </button>
+          <button type="button" class="nav-btn" data-view="admin">
+            <i data-lucide="gauge" class="icon"></i>
+            Admin
+          </button>
+        </nav>
+        <button type="button" id="logout-btn" class="btn ghost">
+          <i data-lucide="log-out" class="icon"></i>
+          Sign out
+        </button>
+      </div>
+    </header>
+
+    <main id="workspace-view" class="workspace">
+      <aside class="rail">
+        <div class="rail-head">
+          <h2><i data-lucide="folder" class="icon"></i> Library</h2>
+          <button type="button" id="refresh-btn" class="btn ghost small">
+            <i data-lucide="refresh-cw" class="icon"></i>
+            Refresh
+          </button>
+        </div>
+
+        <form id="upload-form" class="upload-zone">
+          <input id="file-input" type="file"
+            accept=".pdf,.doc,.docx,.txt,.md,.markdown,.csv,.log,.json,.xml,.html,.htm,.rtf,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv,text/html"
+            hidden />
+          <button type="button" id="pick-file-btn" class="upload-hit">
+            <span class="upload-glyph" aria-hidden="true">
+              <i data-lucide="upload" class="icon xl"></i>
+            </span>
+            <span class="upload-copy">
+              <span class="upload-title">Drop a document</span>
+              <span class="upload-sub">or <em>browse</em> from your computer</span>
+              <span class="upload-formats">
+                <span>PDF</span><span>DOCX</span><span>TXT</span><span>MD</span><span>CSV</span><span>HTML</span>
+              </span>
+              <span class="meta">Max 10MB</span>
+            </span>
+          </button>
+          <p id="upload-status" class="hint" hidden></p>
+        </form>
+
+        <ul id="doc-list" class="doc-list" aria-live="polite"></ul>
+      </aside>
+
+      <section class="stage">
+        <div id="empty-stage" class="empty-stage">
+          <p class="eyebrow">Workspace</p>
+          <h2><i data-lucide="file-search" class="icon"></i> Choose a file to start</h2>
+          <p class="empty-copy">Pick something from the library, or upload a new document. When status is <em>Ready</em>, you can ask questions grounded in that file.</p>
+          <ol class="empty-steps">
+            <li>Upload PDF, DOCX, TXT, MD, CSV, or HTML</li>
+            <li>Wait until indexing shows Ready</li>
+            <li>Ask a question in the panel</li>
+          </ol>
+        </div>
+
+        <div id="ask-stage" class="ask-stage hidden">
+          <header class="doc-header">
+            <div>
+              <p class="eyebrow">Active document</p>
+              <h2 id="active-name">—</h2>
+            </div>
+            <span id="active-status" class="status-pill">—</span>
+          </header>
+
+          <form id="ask-form" class="ask-form">
+            <label class="ask-label" for="question">Your question</label>
+            <textarea id="question" name="question" rows="3" required minlength="3" maxlength="2000"
+              placeholder="What does this document say about…?"></textarea>
+            <div class="ask-actions">
+              <button type="submit" id="ask-btn" class="btn primary">
+                <i data-lucide="message-circle-question" class="icon"></i>
+                Ask DocIntel
+              </button>
+              <p id="ask-hint" class="hint"></p>
+            </div>
+          </form>
+
+          <div id="answer-panel" class="answer-panel hidden">
+            <div class="answer-head">
+              <div>
+                <p class="answer-kicker">Grounded reply</p>
+                <h3><i data-lucide="sparkles" class="icon"></i> Answer</h3>
+              </div>
+              <span class="answer-badge">From your file</span>
+            </div>
+            <div id="answer-text" class="answer-text"></div>
+            <div id="token-meter" class="token-meter hidden" aria-live="polite"></div>
+            <details class="sources-wrap">
+              <summary>
+                <span><i data-lucide="quote" class="icon"></i> Evidence passages</span>
+                <span class="sources-caret" aria-hidden="true"></span>
+              </summary>
+              <p class="sources-note">Raw matched chunks used as context — not the final answer.</p>
+              <ol id="sources-list" class="sources"></ol>
+            </details>
+          </div>
+
+          <p id="ask-error" class="error" hidden></p>
+        </div>
+      </section>
+    </main>
+
+    <section id="admin-view" class="admin-view hidden">
+      <div class="admin-shell">
+        <header class="admin-header">
+          <div>
+            <p class="eyebrow">Operations</p>
+            <h2><i data-lucide="gauge" class="icon"></i> Admin dashboard</h2>
+            <p class="admin-lede">Token consumption across all users against your configured budget.</p>
+          </div>
+          <button type="button" id="admin-refresh-btn" class="btn ghost">
+            <i data-lucide="refresh-cw" class="icon"></i>
+            Refresh stats
+          </button>
+        </header>
+
+        <div class="stat-grid">
+          <article class="stat-card used">
+            <p class="stat-label">Total used</p>
+            <p id="stat-used" class="stat-value">—</p>
+          </article>
+          <article class="stat-card remaining">
+            <p class="stat-label">Remaining</p>
+            <p id="stat-remaining" class="stat-value">—</p>
+          </article>
+          <article class="stat-card budget">
+            <p class="stat-label">Budget</p>
+            <p id="stat-budget" class="stat-value">—</p>
+          </article>
+          <article class="stat-card asks">
+            <p class="stat-label">Asks</p>
+            <p id="stat-asks" class="stat-value">—</p>
+          </article>
+        </div>
+
+        <div class="budget-bar-wrap">
+          <div class="budget-bar-meta">
+            <span>Budget used</span>
+            <span id="stat-percent">0%</span>
+          </div>
+          <div class="budget-bar">
+            <div id="stat-percent-fill" class="budget-bar-fill"></div>
+          </div>
+        </div>
+
+        <div class="admin-table-wrap">
+          <h3>Usage by user</h3>
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Email</th>
+                <th>Asks</th>
+                <th>Tokens</th>
+              </tr>
+            </thead>
+            <tbody id="admin-user-rows">
+              <tr><td colspan="4">No usage yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p id="admin-error" class="error" hidden></p>
+      </div>
+    </section>
+  </section>
+
+  <script src="https://unpkg.com/lucide@0.469.0"></script>
+  <script src="/js/app.js?v=10" type="module"></script>
+</body>
+</html>

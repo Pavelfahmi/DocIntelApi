@@ -1,0 +1,6 @@
+@DocIntelApi_HostAddress = http://localhost:5082
+
+GET {{DocIntelApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

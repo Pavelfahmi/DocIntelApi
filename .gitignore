@@ -1,0 +1,29 @@
+## .NET
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+## Secrets / local config
+appsettings.*.local.json
+secrets.json
+
+## OS / IDE
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+
+## Test / coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+## Logs
+*.log
+logs/

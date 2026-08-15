@@ -1,0 +1,176 @@
+{
+  "info": {
+    "name": "DocIntelApi",
+    "description": "DocIntel API collection.\n\nIMPORTANT: Run 2. Login first. Then open Collection → Variables and confirm accessToken Current value is NOT empty before Upload.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5082" },
+    { "key": "accessToken", "value": "" },
+    { "key": "documentId", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. Register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var json = pm.response.json();",
+              "var token = json.accessToken || json.AccessToken;",
+              "if (token) {",
+              "  pm.collectionVariables.set('accessToken', token);",
+              "  console.log('Saved accessToken, length=' + token.length);",
+              "} else {",
+              "  console.log('No token in response. Status=' + pm.response.code);",
+              "  console.log(pm.response.text());",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"demo@example.com\",\n  \"password\": \"Password1!\",\n  \"fullName\": \"Demo User\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/register"
+      }
+    },
+    {
+      "name": "2. Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var json = pm.response.json();",
+              "var token = json.accessToken || json.AccessToken;",
+              "if (token) {",
+              "  pm.collectionVariables.set('accessToken', token);",
+              "  console.log('Saved accessToken, length=' + token.length);",
+              "} else {",
+              "  console.log('No token in response. Status=' + pm.response.code);",
+              "  console.log(pm.response.text());",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"demo@example.com\",\n  \"password\": \"Password1!\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "3. Upload PDF",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var token = pm.collectionVariables.get('accessToken');",
+              "if (!token) {",
+              "  throw new Error('accessToken is empty. Run 2. Login first, then check Collection Variables.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 202) {",
+              "  var json = pm.response.json();",
+              "  var id = json.id || json.Id;",
+              "  if (id) pm.collectionVariables.set('documentId', id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "File",
+              "type": "file",
+              "src": ""
+            },
+            {
+              "key": "Description",
+              "type": "text",
+              "value": "My test document"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/documents"
+      }
+    },
+    {
+      "name": "4. List Documents",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/v1/documents"
+      }
+    },
+    {
+      "name": "5. Get Document by Id",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/v1/documents/{{documentId}}"
+      }
+    },
+    {
+      "name": "6. Ask Document (RAG)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"Summarize the main points of this document.\",\n  \"topK\": 5\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/documents/{{documentId}}/ask"
+      }
+    },
+    {
+      "name": "7. Delete Document",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": "{{baseUrl}}/api/v1/documents/{{documentId}}"
+      }
+    }
+  ]
+}
