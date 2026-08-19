@@ -1,6 +1,7 @@
 using System.Text;
 using DocIntelApi;
 using DocIntelApi.Infrastructure;
+using DocIntelApi.Middleware;
 using DocIntelApi.Services.Implementations;
 using DocIntelApi.Services.Interfaces;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -128,8 +129,8 @@ builder.Services.AddAuthorization();
 var app = builder.Build();
 
 // ── MIDDLEWARE PIPELINE ───────────────────────────────────────────────
-if (app.Environment.IsDevelopment())
-    app.UseDeveloperExceptionPage();
+// Global exception → ProblemDetails (before the rest of the pipeline)
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (!string.Equals(
         Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),

@@ -35,6 +35,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: docintel-api
+    restart: unless-stopped
     ports:
       - "5082:8080"
     environment:
@@ -43,9 +44,11 @@ services:
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=docinteldb;Username=docintel;Password=docintel123
       Qdrant__Host: qdrant
       Qdrant__Port: "6334"
-    volumes:
-      # Local user-secrets (Jwt:Secret, Gemini:ApiKey) — do not put keys in this file
-      - ${APPDATA}/Microsoft/UserSecrets/docintel-api-local-secrets:/root/.microsoft/usersecrets/docintel-api-local-secrets:ro
+    # Put YOUR Gemini key and JWT secret in a local .env (see .env.example).
+    # .env is gitignored — never commit it.
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       postgres:
         condition: service_healthy

@@ -77,6 +77,15 @@ public class AuthService : IAuthService
         return BuildAuthResponse(user);
     }
 
+    public async Task<bool> IsAdminAsync(Guid userId, CancellationToken ct = default)
+    {
+        return await _db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.IsAdmin)
+            .FirstOrDefaultAsync(ct);
+    }
+
     private AuthResponse BuildAuthResponse(User user)
     {
         var token = _jwt.GenerateToken(user);

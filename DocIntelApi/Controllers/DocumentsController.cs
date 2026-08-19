@@ -1,64 +1,45 @@
 ﻿using DocIntelApi.Extensions;
-using DocIntelApi.Infrastructure;
 using DocIntelApi.Models.Requests;
 using DocIntelApi.Models.Responses;
 using DocIntelApi.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace DocIntelApi.Controllers;
 
 [ApiController]
 [Route("api/v1/[controller]")]
-[Authorize]                      // ALL endpoints require a valid JWT
+[Authorize]
 public class DocumentsController : ControllerBase
 {
     private readonly IDocumentService _docs;
     private readonly IRagService _rag;
-    private readonly AppDbContext _db;
+    private readonly IAuthService _auth;
 
     public DocumentsController(
         IDocumentService docs,
         IRagService rag,
-        AppDbContext db)
+        IAuthService auth)
     {
         _docs = docs;
         _rag = rag;
-        _db = db;
+        _auth = auth;
     }
 
     // POST api/v1/documents
-    // multipart/form-data — because we're uploading a file
     [HttpPost]
     [ProducesResponseType(typeof(DocumentResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Upload(
-        [FromForm] UploadDocumentRequest request)
+    public async Task<IActionResult> Upload([FromForm] UploadDocumentRequest request)
     {
-        var userId = User.GetUserId();   // reads "uid" claim from JWT
+        var userId = User.GetUserId();
+        var result = await _docs.UploadAsync(request, userId);
 
-        try
-        {
-            var result = await _docs.UploadAsync(request, userId);
-
-            // 202 Accepted — document received, embedding still processing
-            // AcceptedAtAction adds a Location header pointing to GET endpoint
-            return AcceptedAtAction(
-                nameof(GetById),
-                new { id = result.Id },
-                result);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new ProblemDetails
-            {
-                Title = "Upload failed",
-                Detail = ex.Message,
-                Status = StatusCodes.Status400BadRequest
-            });
-        }
+        return AcceptedAtAction(
+            nameof(GetById),
+            new { id = result.Id },
+            result);
     }
 
     // GET api/v1/documents
@@ -79,7 +60,6 @@ public class DocumentsController : ControllerBase
     {
         var userId = User.GetUserId();
         var result = await _docs.GetByIdAsync(id, userId);
-
         return result is null ? NotFound() : Ok(result);
     }
 
@@ -91,7 +71,6 @@ public class DocumentsController : ControllerBase
     {
         var userId = User.GetUserId();
         var deleted = await _docs.DeleteAsync(id, userId);
-
         return deleted ? NoContent() : NotFound();
     }
 
@@ -107,46 +86,15 @@ public class DocumentsController : ControllerBase
     {
         var userId = User.GetUserId();
         // Prefer DB flag — JWT role claim mapping can hide Admin on some setups
-        var isAdmin = await _db.Users
-            .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => u.IsAdmin)
-            .FirstOrDefaultAsync(ct);
+        var isAdmin = await _auth.IsAdminAsync(userId, ct);
 
-        try
-        {
-            var result = await _rag.AskAsync(
-                id,
-                request,
-                userId,
-                includeUsage: isAdmin,
-                ct);
-            return result is null ? NotFound() : Ok(result);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new ProblemDetails
-            {
-                Title = "Ask failed",
-                Detail = ex.Message,
-                Status = StatusCodes.Status400BadRequest
-            });
-        }
-        catch (HttpRequestException ex)
-        {
-            var status = ex.StatusCode switch
-            {
-                System.Net.HttpStatusCode.TooManyRequests => StatusCodes.Status429TooManyRequests,
-                System.Net.HttpStatusCode.ServiceUnavailable => StatusCodes.Status503ServiceUnavailable,
-                _ => StatusCodes.Status502BadGateway
-            };
+        var result = await _rag.AskAsync(
+            id,
+            request,
+            userId,
+            includeUsage: isAdmin,
+            ct);
 
-            return StatusCode(status, new ProblemDetails
-            {
-                Title = "AI temporarily unavailable",
-                Detail = ex.Message,
-                Status = status
-            });
-        }
+        return result is null ? NotFound() : Ok(result);
     }
 }

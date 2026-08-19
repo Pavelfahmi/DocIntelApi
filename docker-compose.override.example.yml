@@ -1,0 +1,11 @@
+# Optional Windows helper: copy to docker-compose.override.yml (gitignored).
+# Mounts local user-secrets so you do not need a .env file.
+#
+#   copy docker-compose.override.example.yml docker-compose.override.yml
+#
+# Linux/macOS: skip this file and use .env instead.
+
+services:
+  api:
+    volumes:
+      - ${APPDATA}/Microsoft/UserSecrets/docintel-api-local-secrets:/root/.microsoft/usersecrets/docintel-api-local-secrets:ro
