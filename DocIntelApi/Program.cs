@@ -124,6 +124,7 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddHealthChecks();
 
 // ── BUILD ─────────────────────────────────────────────────────────────
 var app = builder.Build();
@@ -147,6 +148,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // ── ENDPOINTS ─────────────────────────────────────────────────────────
+app.MapHealthChecks("/health").AllowAnonymous();
 app.MapControllers();
 app.MapOpenApi();
 app.MapScalarApiReference();
