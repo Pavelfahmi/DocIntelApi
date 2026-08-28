@@ -16,7 +16,9 @@ ENV ASPNETCORE_URLS=http://+:8080
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && adduser --disabled-password --gecos "" appuser
+    && adduser --disabled-password --gecos "" appuser \
+    && mkdir -p /app/logs \
+    && chown -R appuser:appuser /app
 
 COPY --from=build --chown=appuser:appuser /app/publish .
 

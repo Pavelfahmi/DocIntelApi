@@ -9,151 +9,202 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Qdrant.Client;
 using Scalar.AspNetCore;
+using Serilog;
 
-var builder = WebApplication.CreateBuilder(args);
+// Capture early startup failures before the host is built
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
-// ── SERVICES ─────────────────────────────────────────────────────────
+try
+{
+    var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddOpenApi();
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Application", "DocIntelApi"));
 
-// PostgreSQL
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection"))
-    .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
-);
+    // ── SERVICES ─────────────────────────────────────────────────────────
 
-// JWT Token Service — Singleton because it's stateless
-builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddOpenApi();
 
-// Auth Service — Scoped because it uses DbContext
-builder.Services.AddScoped<IAuthService, AuthService>();
+    // PostgreSQL
+    builder.Services.AddDbContext<AppDbContext>(options =>
+        options.UseNpgsql(
+            builder.Configuration.GetConnectionString("DefaultConnection"))
+        .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
+    );
 
-// Document processing services
-builder.Services.AddScoped<IDocumentService, DocumentService>();
-builder.Services.AddScoped<IDocumentTextExtractor, DocumentTextExtractor>();
-builder.Services.AddSingleton<ITextChunkingService, TextChunkingService>();
+    // JWT Token Service — Singleton because it's stateless
+    builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
-// HTTP client for Gemini API calls
-builder.Services.AddHttpClient<GeminiProvider>();
+    // Auth Service — Scoped because it uses DbContext
+    builder.Services.AddScoped<IAuthService, AuthService>();
 
-// LLM Provider — swap this one line to change LLM
-builder.Services.AddScoped<ILLMProvider, GeminiProvider>();
+    // Document processing services
+    builder.Services.AddScoped<IDocumentService, DocumentService>();
+    builder.Services.AddScoped<IDocumentTextExtractor, DocumentTextExtractor>();
+    builder.Services.AddSingleton<ITextChunkingService, TextChunkingService>();
 
-// Vector store
-builder.Services.AddScoped<IVectorStore, QdrantVectorStore>();
+    // HTTP client for Gemini API calls
+    builder.Services.AddHttpClient<GeminiProvider>();
 
-// Embedding orchestration
-builder.Services.AddScoped<IEmbeddingService, EmbeddingService>();
+    // LLM Provider — swap this one line to change LLM
+    builder.Services.AddScoped<ILLMProvider, GeminiProvider>();
 
-// RAG Q&A over indexed documents
-builder.Services.AddScoped<IRagService, RagService>();
-builder.Services.AddScoped<IAdminUsageService, AdminUsageService>();
+    // Vector store
+    builder.Services.AddScoped<IVectorStore, QdrantVectorStore>();
 
-// Background indexing — queue is singleton; worker creates a scope per job
-builder.Services.AddSingleton<IDocumentIndexingQueue, DocumentIndexingQueue>();
-builder.Services.AddHostedService<DocumentIndexingBackgroundService>();
+    // Embedding orchestration
+    builder.Services.AddScoped<IEmbeddingService, EmbeddingService>();
 
-// Qdrant client — Singleton, maintains gRPC connection pool
-builder.Services.AddSingleton<QdrantClient>(_ =>
-    new QdrantClient(
-        host: builder.Configuration["Qdrant:Host"] ?? "localhost",
-        port: int.Parse(builder.Configuration["Qdrant:Port"] ?? "6334"),
-        https: false
-    )
-);
+    // RAG Q&A over indexed documents
+    builder.Services.AddScoped<IRagService, RagService>();
+    builder.Services.AddScoped<IAdminUsageService, AdminUsageService>();
 
-var jwtSecret = builder.Configuration["Jwt:Secret"]
-    ?? throw new InvalidOperationException(
-        "Jwt:Secret is missing. Set it via user-secrets or environment variables.");
+    // Background indexing — queue is singleton; worker creates a scope per job
+    builder.Services.AddSingleton<IDocumentIndexingQueue, DocumentIndexingQueue>();
+    builder.Services.AddHostedService<DocumentIndexingBackgroundService>();
 
-if (jwtSecret.Length < 32)
-    throw new InvalidOperationException(
-        "Jwt:Secret must be at least 32 characters.");
+    // Qdrant client — Singleton, maintains gRPC connection pool
+    builder.Services.AddSingleton<QdrantClient>(_ =>
+        new QdrantClient(
+            host: builder.Configuration["Qdrant:Host"] ?? "localhost",
+            port: int.Parse(builder.Configuration["Qdrant:Port"] ?? "6334"),
+            https: false
+        )
+    );
 
-if (string.IsNullOrWhiteSpace(builder.Configuration["Gemini:ApiKey"]))
-    throw new InvalidOperationException(
-        "Gemini:ApiKey is missing. Set it with: " +
-        "dotnet user-secrets set \"Gemini:ApiKey\" \"YOUR_KEY\"");
+    var jwtSecret = builder.Configuration["Jwt:Secret"]
+        ?? throw new InvalidOperationException(
+            "Jwt:Secret is missing. Set it via user-secrets or environment variables.");
 
-// Configure JWT Authentication
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    if (jwtSecret.Length < 32)
+        throw new InvalidOperationException(
+            "Jwt:Secret must be at least 32 characters.");
+
+    if (string.IsNullOrWhiteSpace(builder.Configuration["Gemini:ApiKey"]))
+        throw new InvalidOperationException(
+            "Gemini:ApiKey is missing. Set it with: " +
+            "dotnet user-secrets set \"Gemini:ApiKey\" \"YOUR_KEY\"");
+
+    // Configure JWT Authentication
+    builder.Services
+        .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(
+                    Encoding.UTF8.GetBytes(jwtSecret)),
+
+                ValidateIssuer = true,
+                ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                ValidateAudience = true,
+                ValidAudience = builder.Configuration["Jwt:Audience"],
+
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.Zero,
+                RoleClaimType = System.Security.Claims.ClaimTypes.Role
+            };
+
+            options.Events = new JwtBearerEvents
+            {
+                OnAuthenticationFailed = ctx =>
+                {
+                    var logger = ctx.HttpContext.RequestServices
+                        .GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("JwtAuth");
+                    logger.LogWarning(ctx.Exception,
+                        "JWT authentication failed: {Message}", ctx.Exception.Message);
+                    return Task.CompletedTask;
+                },
+                OnChallenge = ctx =>
+                {
+                    var logger = ctx.HttpContext.RequestServices
+                        .GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("JwtAuth");
+                    logger.LogWarning(
+                        "JWT challenge (401). Error={Error} Desc={Description}",
+                        ctx.Error, ctx.ErrorDescription);
+                    return Task.CompletedTask;
+                }
+            };
+        });
+
+    builder.Services.AddAuthorization();
+    builder.Services.AddHealthChecks();
+
+    // ── BUILD ─────────────────────────────────────────────────────────────
+    var app = builder.Build();
+
+    // ── MIDDLEWARE PIPELINE ───────────────────────────────────────────────
+    app.UseSerilogRequestLogging(options =>
     {
-        options.TokenValidationParameters = new TokenValidationParameters
+        options.MessageTemplate =
+            "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+        options.GetLevel = (httpContext, elapsed, ex) =>
         {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtSecret)),
+            if (httpContext.Request.Path.StartsWithSegments("/health"))
+                return Serilog.Events.LogEventLevel.Debug;
 
-            ValidateIssuer = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidateAudience = true,
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero,
-            RoleClaimType = System.Security.Claims.ClaimTypes.Role
+            if (ex is not null || httpContext.Response.StatusCode >= 500)
+                return Serilog.Events.LogEventLevel.Error;
+            if (httpContext.Response.StatusCode >= 400)
+                return Serilog.Events.LogEventLevel.Warning;
+            return Serilog.Events.LogEventLevel.Information;
         };
-
-        options.Events = new JwtBearerEvents
+        options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
         {
-            OnAuthenticationFailed = ctx =>
-            {
-                var logger = ctx.HttpContext.RequestServices
-                    .GetRequiredService<ILoggerFactory>()
-                    .CreateLogger("JwtAuth");
-                logger.LogWarning(ctx.Exception,
-                    "JWT authentication failed: {Message}", ctx.Exception.Message);
-                return Task.CompletedTask;
-            },
-            OnChallenge = ctx =>
-            {
-                var logger = ctx.HttpContext.RequestServices
-                    .GetRequiredService<ILoggerFactory>()
-                    .CreateLogger("JwtAuth");
-                logger.LogWarning(
-                    "JWT challenge (401). Error={Error} Desc={Description}",
-                    ctx.Error, ctx.ErrorDescription);
-                return Task.CompletedTask;
-            }
+            diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value);
+            diagnosticContext.Set("UserAgent", httpContext.Request.Headers.UserAgent.ToString());
         };
     });
 
-builder.Services.AddAuthorization();
-builder.Services.AddHealthChecks();
+    // Global exception → ProblemDetails (before the rest of the pipeline)
+    app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-// ── BUILD ─────────────────────────────────────────────────────────────
-var app = builder.Build();
+    if (!string.Equals(
+            Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+            "true",
+            StringComparison.OrdinalIgnoreCase))
+        app.UseHttpsRedirection();
 
-// ── MIDDLEWARE PIPELINE ───────────────────────────────────────────────
-// Global exception → ProblemDetails (before the rest of the pipeline)
-app.UseMiddleware<ExceptionHandlingMiddleware>();
+    // SPA UI (wwwroot) — same origin as API, no CORS needed
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
 
-if (!string.Equals(
-        Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
-        "true",
-        StringComparison.OrdinalIgnoreCase))
-    app.UseHttpsRedirection();
+    app.UseRouting();
+    app.UseAuthentication();
+    app.UseAuthorization();
 
-// SPA UI (wwwroot) — same origin as API, no CORS needed
-app.UseDefaultFiles();
-app.UseStaticFiles();
+    // ── ENDPOINTS ─────────────────────────────────────────────────────────
+    app.MapHealthChecks("/health").AllowAnonymous();
+    app.MapControllers();
+    app.MapOpenApi();
+    app.MapScalarApiReference();
 
-app.UseRouting();
-app.UseAuthentication();
-app.UseAuthorization();
+    if (app.Environment.IsDevelopment())
+        await DevAdminSeeder.SeedAsync(app);
 
-// ── ENDPOINTS ─────────────────────────────────────────────────────────
-app.MapHealthChecks("/health").AllowAnonymous();
-app.MapControllers();
-app.MapOpenApi();
-app.MapScalarApiReference();
+    Log.Information(
+        "DocIntelApi starting in {Environment} on {Urls}",
+        app.Environment.EnvironmentName,
+        Environment.GetEnvironmentVariable("ASPNETCORE_URLS") ?? "(launch profile)");
 
-if (app.Environment.IsDevelopment())
-    await DevAdminSeeder.SeedAsync(app);
-
-app.Run();
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "DocIntelApi terminated unexpectedly");
+    throw;
+}
+finally
+{
+    Log.CloseAndFlush();
+}
