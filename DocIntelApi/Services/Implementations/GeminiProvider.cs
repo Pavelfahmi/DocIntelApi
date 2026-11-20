@@ -1,6 +1,5 @@
 ﻿using DocIntelApi.Services.Interfaces;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -33,11 +32,11 @@ public class GeminiProvider : ILLMProvider
         CancellationToken ct = default,
         string? taskType = null)
     {
-        var apiKey = _config["Gemini:ApiKey"]!;
+        var apiKey = RequireApiKey();
         // text-embedding-004 was shut down Jan 2026 — use gemini-embedding-001
         var model = _config["Gemini:EmbeddingModel"] ?? "gemini-embedding-001";
 
-        var url = $"{EmbedBaseUrl}/{model}:embedContent?key={apiKey}";
+        var url = $"{EmbedBaseUrl}/{model}:embedContent";
 
         var body = new
         {
@@ -50,13 +49,13 @@ public class GeminiProvider : ILLMProvider
         };
 
         var json = JsonSerializer.Serialize(body);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var request = CreateGeminiRequest(HttpMethod.Post, url, json, apiKey);
 
         _logger.LogDebug(
             "Embedding text of length {Length} with model {Model}",
             text.Length, model);
 
-        var response = await _http.PostAsync(url, content, ct);
+        var response = await _http.SendAsync(request, ct);
         var responseJson = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
@@ -87,11 +86,11 @@ public class GeminiProvider : ILLMProvider
     public async Task<LlmCompletionResult> CompleteAsync(
         string prompt, CancellationToken ct = default)
     {
-        var apiKey = _config["Gemini:ApiKey"]!;
+        var apiKey = RequireApiKey();
         // gemini-2.0/2.5 Flash blocked for new API keys — use gemini-3.5-flash
         var model = _config["Gemini:ChatModel"] ?? "gemini-3.5-flash";
 
-        var url = $"{ChatBaseUrl}/{model}:generateContent?key={apiKey}";
+        var url = $"{ChatBaseUrl}/{model}:generateContent";
 
         var body = new
         {
@@ -110,8 +109,8 @@ public class GeminiProvider : ILLMProvider
         };
 
         var json = JsonSerializer.Serialize(body);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-        var response = await _http.PostAsync(url, content, ct);
+        using var request = CreateGeminiRequest(HttpMethod.Post, url, json, apiKey);
+        var response = await _http.SendAsync(request, ct);
         var responseJson = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
@@ -135,10 +134,10 @@ public class GeminiProvider : ILLMProvider
         string prompt,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var apiKey = _config["Gemini:ApiKey"]!;
+        var apiKey = RequireApiKey();
         var model = _config["Gemini:ChatModel"] ?? "gemini-3.5-flash";
 
-        var url = $"{ChatBaseUrl}/{model}:streamGenerateContent?key={apiKey}&alt=sse";
+        var url = $"{ChatBaseUrl}/{model}:streamGenerateContent?alt=sse";
 
         var body = new
         {
@@ -154,12 +153,7 @@ public class GeminiProvider : ILLMProvider
         };
 
         var json = JsonSerializer.Serialize(body);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var request = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = content
-        };
+        using var request = CreateGeminiRequest(HttpMethod.Post, url, json, apiKey);
 
         using var response = await _http.SendAsync(
             request,
@@ -195,6 +189,31 @@ public class GeminiProvider : ILLMProvider
             if (!string.IsNullOrEmpty(token))
                 yield return token;
         }
+    }
+
+    private string RequireApiKey()
+    {
+        var apiKey = _config["Gemini:ApiKey"];
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new HttpRequestException(
+                "Gemini is not configured. Set Gemini__ApiKey.",
+                null,
+                HttpStatusCode.ServiceUnavailable);
+        }
+
+        return apiKey;
+    }
+
+    private static HttpRequestMessage CreateGeminiRequest(
+        HttpMethod method, string url, string json, string apiKey)
+    {
+        var request = new HttpRequestMessage(method, url)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+        request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
+        return request;
     }
 
     private static HttpRequestException CreateGeminiException(
