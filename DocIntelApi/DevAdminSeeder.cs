@@ -53,8 +53,7 @@ public static class DevAdminSeeder
             };
             db.Users.Add(user);
             await db.SaveChangesAsync();
-            logger.LogInformation(
-                "Created default admin: {Email} / {Password}", email, DefaultPassword);
+            logger.LogInformation("Created default development admin: {Email}", email);
             return;
         }
 

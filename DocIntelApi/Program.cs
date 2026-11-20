@@ -1,10 +1,13 @@
+using System.Security.Cryptography;
 using System.Text;
 using DocIntelApi;
+using DocIntelApi.Hosting;
 using DocIntelApi.Infrastructure;
 using DocIntelApi.Middleware;
 using DocIntelApi.Services.Implementations;
 using DocIntelApi.Services.Interfaces;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Qdrant.Client;
@@ -18,7 +21,21 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
+    try
+    {
+        Directory.CreateDirectory("logs");
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "Could not create logs directory; file sink may be unavailable");
+    }
+
     var builder = WebApplication.CreateBuilder(args);
+    AddCursorAppEnvAliases(builder.Configuration);
+
+    var port = Environment.GetEnvironmentVariable("PORT");
+    if (!string.IsNullOrWhiteSpace(port))
+        builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
@@ -32,10 +49,24 @@ try
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddOpenApi();
 
-    // PostgreSQL
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+            | ForwardedHeaders.XForwardedProto;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+
+    var connectionString = PostgresUrl.Resolve(builder.Configuration);
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        Log.Warning(
+            "No Postgres connection string. Set ConnectionStrings__DefaultConnection or DATABASE_URL.");
+        connectionString = "Host=127.0.0.1;Database=docintel;Username=docintel";
+    }
+
     builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseNpgsql(
-            builder.Configuration.GetConnectionString("DefaultConnection"))
+        options.UseNpgsql(connectionString)
         .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
     );
 
@@ -70,27 +101,30 @@ try
     builder.Services.AddSingleton<IDocumentIndexingQueue, DocumentIndexingQueue>();
     builder.Services.AddHostedService<DocumentIndexingBackgroundService>();
 
-    // Qdrant client — Singleton, maintains gRPC connection pool
-    builder.Services.AddSingleton<QdrantClient>(_ =>
+    var qdrant = QdrantOptions.From(builder.Configuration);
+    builder.Services.AddSingleton(_ =>
         new QdrantClient(
-            host: builder.Configuration["Qdrant:Host"] ?? "localhost",
-            port: int.Parse(builder.Configuration["Qdrant:Port"] ?? "6334"),
-            https: false
+            host: qdrant.Host,
+            port: qdrant.Port,
+            https: qdrant.Https,
+            apiKey: qdrant.ApiKey
         )
     );
 
-    var jwtSecret = builder.Configuration["Jwt:Secret"]
-        ?? throw new InvalidOperationException(
-            "Jwt:Secret is missing. Set it via user-secrets or environment variables.");
-
-    if (jwtSecret.Length < 32)
-        throw new InvalidOperationException(
-            "Jwt:Secret must be at least 32 characters.");
+    var jwtSecret = builder.Configuration["Jwt:Secret"];
+    if (string.IsNullOrWhiteSpace(jwtSecret) || jwtSecret.Length < 32)
+    {
+        jwtSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        Log.Warning(
+            "Jwt:Secret is missing or shorter than 32 characters. " +
+            "Using an ephemeral secret for this process. Set Jwt__Secret for durable sessions.");
+    }
 
     if (string.IsNullOrWhiteSpace(builder.Configuration["Gemini:ApiKey"]))
-        throw new InvalidOperationException(
-            "Gemini:ApiKey is missing. Set it with: " +
-            "dotnet user-secrets set \"Gemini:ApiKey\" \"YOUR_KEY\"");
+    {
+        Log.Warning(
+            "Gemini:ApiKey is not set. The UI will still boot; indexing and Ask will fail until Gemini__ApiKey is provided.");
+    }
 
     // Configure JWT Authentication
     builder.Services
@@ -144,6 +178,8 @@ try
     var app = builder.Build();
 
     // ── MIDDLEWARE PIPELINE ───────────────────────────────────────────────
+    app.UseForwardedHeaders();
+
     app.UseSerilogRequestLogging(options =>
     {
         options.MessageTemplate =
@@ -169,10 +205,11 @@ try
     // Global exception → ProblemDetails (before the rest of the pipeline)
     app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-    if (!string.Equals(
-            Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
-            "true",
-            StringComparison.OrdinalIgnoreCase))
+    var runningInContainer = string.Equals(
+        Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+        "true",
+        StringComparison.OrdinalIgnoreCase);
+    if (!runningInContainer && string.IsNullOrWhiteSpace(port) && app.Environment.IsDevelopment())
         app.UseHttpsRedirection();
 
     // SPA UI (wwwroot) — same origin as API, no CORS needed
@@ -188,6 +225,9 @@ try
     app.MapControllers();
     app.MapOpenApi();
     app.MapScalarApiReference();
+    app.MapFallbackToFile("index.html");
+
+    await ApplyMigrationsAsync(app);
 
     if (app.Environment.IsDevelopment())
         await DevAdminSeeder.SeedAsync(app);
@@ -195,7 +235,9 @@ try
     Log.Information(
         "DocIntelApi starting in {Environment} on {Urls}",
         app.Environment.EnvironmentName,
-        Environment.GetEnvironmentVariable("ASPNETCORE_URLS") ?? "(launch profile)");
+        Environment.GetEnvironmentVariable("ASPNETCORE_URLS")
+            ?? Environment.GetEnvironmentVariable("PORT")
+            ?? "(launch profile)");
 
     app.Run();
 }
@@ -207,4 +249,54 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+static void AddCursorAppEnvAliases(ConfigurationManager config)
+{
+    // Cursor Apps secrets must be UPPER_CASE; ASP.NET Core keys use Jwt:Secret.
+    var aliases = new Dictionary<string, string?>();
+
+    void Alias(string dest, params string[] keys)
+    {
+        if (!string.IsNullOrWhiteSpace(config[dest]))
+            return;
+
+        foreach (var key in keys)
+        {
+            var value = Environment.GetEnvironmentVariable(key);
+            if (string.IsNullOrWhiteSpace(value))
+                continue;
+            aliases[dest] = value;
+            return;
+        }
+    }
+
+    Alias("Gemini:ApiKey", "GEMINI_API_KEY");
+    Alias("Jwt:Secret", "JWT_SECRET");
+    Alias("Qdrant:Host", "QDRANT_HOST");
+    Alias("Qdrant:Port", "QDRANT_PORT");
+    Alias("Qdrant:Https", "QDRANT_HTTPS");
+    Alias("Qdrant:ApiKey", "QDRANT_API_KEY");
+
+    if (aliases.Count > 0)
+        config.AddInMemoryCollection(aliases);
+}
+
+static async Task ApplyMigrationsAsync(WebApplication app)
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("DatabaseStartup");
+
+    try
+    {
+        await db.Database.MigrateAsync();
+        logger.LogInformation("Database migrations applied");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex,
+            "Could not apply database migrations. The UI will still serve; API calls that need Postgres will fail until the database is reachable.");
+    }
 }
